@@ -1,5 +1,9 @@
 package main
 
+import (
+	"fmt"
+)
+
 // A song composition, which can contain multiple subsongs.
 type Song struct {
 	Name   string  // The name of the song.
@@ -43,3 +47,111 @@ type Row struct {
 }
 
 type Note int // A single note (stored as a Midi note number).
+
+/*
+isValidNoteString Returns true if the given note string is valid, otherwise returns false.
+
+The note string is always 3 characters. If the note string is exactly "...", the given note is empty/blank, however this is still a valid note string.
+Otherwise, the first character of the note string should be a capital letter in the range of A-G.
+The second character should be:
+
+- '#' if the note is sharp and the octave is >= 0,
+
+- '+' if the note is sharp and the octave is < 0,
+
+- '-' if the note is natural and the octave is >= 0, or
+
+- '_' if the note is natural and the octave is < 0.
+
+The third character is a digit '0'..'7' representing the absolute value of the octave.
+Negative octaves (where the second char == '+' or '_') are only allowed when that digit is <= 5.
+(The overall octave range is -5 through 7.)
+*/
+func isValidNoteString(noteString string) bool {
+	// Note strings are always 3 characters long.
+	if len(noteString) != 3 {
+		return false
+	}
+
+	// The specific string "..." is an empty/blank note, and is still a valid note string.
+	if noteString == "..." {
+		return true
+	}
+
+	// The first character must be a capital letter in the range A-G.
+	first := noteString[0]
+	second := noteString[1]
+	third := noteString[2]
+	if !(first >= 'A' && first <= 'G') {
+		return false
+	}
+
+	// The third character must be an integer between 0 and 7.
+	if third < '0' || third > '7' {
+		return false
+	}
+	absoluteOctave := int(third - '0')
+
+	// The second character must be '#', '+', '-' or '_'.
+	// '+' and '_' are only valid if the absolute value of the octave is <= 5.
+	switch second {
+	case '#', '+', '-', '_':
+		// ok
+	default:
+		return false
+	}
+	if (second == '+' || second == '_') && absoluteOctave > 5 {
+		return false
+	}
+
+	return true
+}
+
+var noteBase = map[byte]int{
+	'C': 0,
+	'D': 2,
+	'E': 4,
+	'F': 5,
+	'G': 7,
+	'A': 9,
+	'B': 11,
+}
+
+// parseNote accepts a note string and returns either a pointer to a Note object defining that note, or nil if there is no note.
+func parseNote(noteString string) (*Note, error) {
+	// Ensure the note string follows the correct format.
+	if !isValidNoteString(noteString) {
+		return nil, fmt.Errorf("invalid note string: %s", noteString)
+	}
+
+	// Check if there is a note at all. "..." is still valid but means there is no note, so nil should be returned.
+	if noteString == "..." {
+		return nil, nil
+	}
+
+	first := noteString[0]
+	second := noteString[1]
+	third := noteString[2]
+
+	octave := int(third - '0')
+
+	// Accidentals of '+' or '_' indicate a negative octave.
+	if second == '+' || second == '_' {
+		octave = -octave
+	}
+
+	var accidental int
+	switch second {
+	case '#', '+':
+		accidental = 1
+	case '-', '_':
+		accidental = 0
+	default:
+		panic(fmt.Sprintf("invalid accidental: %q", second))
+	}
+
+	midiNote := (octave+1)*12 + noteBase[first] + accidental
+	note := Note(midiNote)
+
+	return &note, nil
+}
