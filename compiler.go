@@ -19,7 +19,7 @@ func main() {
 	// Get the current working directory.
 	cwd, err := os.Getwd()
 	if err != nil {
-		Logger.Fatalf("Failed to get current working directory: %v", err)
+		Logger.Fatalf("failed to get current working directory: %v", err)
 	}
 
 	// Get the path of the Furnace text export file.
@@ -29,7 +29,7 @@ func main() {
 			Logger.Printf("User cancelled the file dialog")
 			os.Exit(1)
 		}
-		Logger.Fatalf("Failed to determine file path: %v", err)
+		Logger.Fatalf("failed to determine file path: %v", err)
 	}
 
 	Logger.Printf("Final file path: %v", path)
