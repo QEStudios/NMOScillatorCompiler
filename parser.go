@@ -6,10 +6,11 @@ import (
 
 // A song composition, which can contain multiple subsongs.
 type Song struct {
-	Name   string  // The name of the song.
-	Author string  // The author of the song.
-	Album  string  // The album the song is a part of.
-	Tuning float32 // The frequency that A4 maps to in this song (usually 440 hz).
+	Version int     // The version integer of Furnace that exported this song
+	Name    string  // The name of the song.
+	Author  string  // The author of the song.
+	Album   string  // The album the song is a part of.
+	Tuning  float32 // The frequency that A4 maps to in this song (usually 440 hz).
 
 	// A slice of sound chips used in the song.
 	SoundChips []*SoundChip
