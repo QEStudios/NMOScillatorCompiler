@@ -47,12 +47,20 @@ type Row struct {
 	Notes []*Note
 }
 
-type Note int // A single note (stored as a Midi note number).
+type Note struct {
+	Pitch  NotePitch
+	Volume NoteVolume
+	Off    bool // if true, is a note-off
+}
+
+type NotePitch int    // A single note (stored as a Midi note number).
+type NoteVolume uint8 // A single note's volume (4-bit).
 
 /*
 isValidNoteString Returns true if the given note string is valid, otherwise returns false.
 
 The note string is always 3 characters. If the note string is exactly "...", the given note is empty/blank, however this is still a valid note string.
+If the note string is exactly "OFF", the note is a note-off.
 Otherwise, the first character of the note string should be a capital letter in the range of A-G.
 The second character should be:
 
@@ -76,6 +84,10 @@ func isValidNoteString(noteString string) bool {
 
 	// The specific string "..." is an empty/blank note, and is still a valid note string.
 	if noteString == "..." {
+		return true
+	}
+
+	if noteString == "OFF" {
 		return true
 	}
 
@@ -118,7 +130,7 @@ var noteBase = map[byte]int{
 	'B': 11,
 }
 
-// parseNote accepts a note string and returns either a pointer to a Note object defining that note, or nil if there is no note.
+// parseNote accepts a note string and returns either a pointer to a Note struct defining that note, or nil if there is no note.
 func parseNote(noteString string) (*Note, error) {
 	// Ensure the note string follows the correct format.
 	if !isValidNoteString(noteString) {
@@ -128,6 +140,13 @@ func parseNote(noteString string) (*Note, error) {
 	// Check if there is a note at all. "..." is still valid but means there is no note, so nil should be returned.
 	if noteString == "..." {
 		return nil, nil
+	}
+
+	if noteString == "OFF" {
+		return &Note{
+			Pitch: 0,
+			Off:   true,
+		}, nil
 	}
 
 	first := noteString[0]
@@ -152,7 +171,9 @@ func parseNote(noteString string) (*Note, error) {
 	}
 
 	midiNote := (octave+1)*12 + noteBase[first] + accidental
-	note := Note(midiNote)
 
-	return &note, nil
+	return &Note{
+		Pitch: NotePitch(midiNote),
+		Off:   false,
+	}, nil
 }
