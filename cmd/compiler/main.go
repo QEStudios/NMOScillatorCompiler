@@ -8,31 +8,53 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QEStudios/NMOScillatorCompiler/parser/furnace"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/sqweek/dialog"
 )
 
-var Logger *log.Logger
+var logger *log.Logger
 
 func main() {
-	Logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	logger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
 	// Get the current working directory.
 	cwd, err := os.Getwd()
 	if err != nil {
-		Logger.Fatalf("failed to get current working directory: %v", err)
+		logger.Fatalf("failed to get current working directory: %v", err)
 	}
 
 	// Get the path of the Furnace text export file.
 	path, err := choosePath(cwd, os.Args)
 	if err != nil {
 		if errors.Is(err, dialog.ErrCancelled) {
-			Logger.Printf("User cancelled the file dialog")
+			logger.Printf("User cancelled the file dialog")
 			os.Exit(1)
 		}
-		Logger.Fatalf("failed to determine file path: %v", err)
+		logger.Fatalf("failed to determine file path: %v", err)
 	}
 
-	Logger.Printf("Final file path: %v", path)
+	file, err := os.Open(path)
+	if err != nil {
+		logger.Fatalf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	p := furnace.NewParser(file, logger)
+	result, err := p.Parse()
+	if err != nil {
+		logger.Fatalf("parse error: %v", err)
+	}
+	song := result.Song
+	warnings := result.Warnings
+
+	spew.Dump(song)
+	if len(warnings) > 0 {
+		logger.Printf("Parser returned %d warning(s):\n", len(warnings))
+		for _, w := range warnings {
+			logger.Printf("warning: %s", w)
+		}
+	}
 }
 
 // choosePath returns the file path either from the command-line args
@@ -44,7 +66,6 @@ func choosePath(cwd string, args []string) (string, error) {
 		if err := validatePath(path); err != nil {
 			return "", fmt.Errorf("passed argument is not a valid path: %w", err)
 		}
-		Logger.Printf("Using file from argument: %v", path)
 		return path, nil
 	}
 
@@ -67,7 +88,6 @@ func choosePath(cwd string, args []string) (string, error) {
 	if err := validatePath(path); err != nil {
 		return "", fmt.Errorf("dialog selection invalid: %w", err)
 	}
-	Logger.Printf("Selected file: %v", path)
 	return path, nil
 }
 
