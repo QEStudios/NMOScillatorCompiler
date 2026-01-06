@@ -35,7 +35,7 @@ type Subsong struct {
 	// A slice of up to 16 speed values, where the values cycle every tick.
 	// The final update speed is calculated as the Tick Rate divided by the Frame Speed.
 	Speeds   []*int
-	TimeBase uint8 // Not sure what this value means, the Furnace code seems to multiply the speeds by this number + 1, so when this is 0 the speeds remain unchanged.
+	TimeBase int // Not sure what this value means, the Furnace code seems to multiply the speeds by this number + 1, so when this is 0 the speeds remain unchanged.
 
 	// A slice of every frame in the subsong.
 	Rows []*Row
