@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/davecgh/go-spew/spew"
 )
@@ -65,63 +66,78 @@ type Subsong struct {
 	TimeBase int // Not sure what this value means, the Furnace code seems to multiply the speeds by this number + 1, so when this is 0 the speeds remain unchanged.
 
 	// A slice of every frame in the subsong.
-	Rows []*Row
+	Rows []Row
 }
 
 // A row in the (sub)song.
 type Row struct {
-	Index int
-	Notes []*Note
+	Index   int
+	Notes   []Note
+	Effects []Effect
 }
 
 type Note struct {
-	Pitch  NotePitch
-	Volume NoteVolume
-	Off    bool // if true, is a note-off
+	Pitch    NotePitch
+	HasPitch bool
+
+	Volume    NoteVolume
+	HasVolume bool
+
+	Off bool // if true, is a note-off
+
+	Channel Channel
 }
 
+type Channel uint8
 type NotePitch int    // A single note (stored as a Midi note number).
 type NoteVolume uint8 // A single note's volume (4-bit).
+type EffectType int
+
+const (
+	EffectJumpToPattern EffectType = iota
+	EffectSpeed
+	EffectNoiseControl
+	EffectTickRateHz
+	EffectTickRateBpm
+	EffectStopSong
+)
+
+type Effect struct {
+	Type  EffectType
+	Value uint16
+}
 
 /*
-isValidNoteString Returns true if the given note string is valid, otherwise returns false.
+isValidPitchString returns true if the given pitch string is valid, otherwise returns false.
 
-The note string is always 3 characters. If the note string is exactly "...", the given note is empty/blank, however this is still a valid note string.
-If the note string is exactly "OFF", the note is a note-off.
-Otherwise, the first character of the note string should be a capital letter in the range of A-G.
+The pitch string is always 3 characters.
+The first character of the pitch string should be a capital letter in the range of A-G.
 The second character should be:
 
-- '#' if the note is sharp and the octave is >= 0,
+- '#' if the pitch is sharp and the octave is >= 0,
 
-- '+' if the note is sharp and the octave is < 0,
+- '+' if the pitch is sharp and the octave is < 0,
 
-- '-' if the note is natural and the octave is >= 0, or
+- '-' if the pitch is natural and the octave is >= 0, or
 
-- '_' if the note is natural and the octave is < 0.
+- '_' if the pitch is natural and the octave is < 0.
 
 The third character is a digit '0'..'7' representing the absolute value of the octave.
 Negative octaves (where the second char == '+' or '_') are only allowed when that digit is <= 5.
 (The overall octave range is -5 through 7.)
 */
-func isValidNoteString(noteString string) bool {
-	// Note strings are always 3 characters long.
-	if len(noteString) != 3 {
+func isValidPitchString(pitchString string) bool {
+	// Pitch strings are always 3 characters long.
+	if len(pitchString) != 3 {
 		return false
 	}
 
-	// The specific string "..." is an empty/blank note, and is still a valid note string.
-	if noteString == "..." {
-		return true
-	}
-
-	if noteString == "OFF" {
-		return true
-	}
+	upperString := strings.ToUpper(pitchString)
+	first := upperString[0]
+	second := upperString[1]
+	third := upperString[2]
 
 	// The first character must be a capital letter in the range A-G.
-	first := noteString[0]
-	second := noteString[1]
-	third := noteString[2]
 	if !(first >= 'A' && first <= 'G') {
 		return false
 	}
@@ -147,38 +163,17 @@ func isValidNoteString(noteString string) bool {
 	return true
 }
 
-var noteBase = map[byte]int{
-	'C': 0,
-	'D': 2,
-	'E': 4,
-	'F': 5,
-	'G': 7,
-	'A': 9,
-	'B': 11,
-}
-
-// parseNote accepts a note string and returns either a pointer to a Note struct defining that note, or nil if there is no note.
-func parseNote(noteString string) (*Note, error) {
-	// Ensure the note string follows the correct format.
-	if !isValidNoteString(noteString) {
-		return nil, fmt.Errorf("invalid note string: %s", noteString)
+// parsePitchString parses a pitch string and returns a NotePitch.
+func parsePitchString(pitchString string) (NotePitch, error) {
+	// Ensure the pitch string follows the correct format.
+	if !isValidPitchString(pitchString) {
+		return NotePitch(0), fmt.Errorf("invalid pitch string '%s'", pitchString)
 	}
 
-	// Check if there is a note at all. "..." is still valid but means there is no note, so nil should be returned.
-	if noteString == "..." {
-		return nil, nil
-	}
-
-	if noteString == "OFF" {
-		return &Note{
-			Pitch: 0,
-			Off:   true,
-		}, nil
-	}
-
-	first := noteString[0]
-	second := noteString[1]
-	third := noteString[2]
+	upperString := strings.ToUpper(pitchString)
+	first := upperString[0]
+	second := upperString[1]
+	third := upperString[2]
 
 	octave := int(third - '0')
 
@@ -194,15 +189,224 @@ func parseNote(noteString string) (*Note, error) {
 	case '-', '_':
 		accidental = 0
 	default:
-		panic(fmt.Sprintf("invalid accidental: %q", second))
+		panic(fmt.Sprintf("invalid accidental '%q'", second))
 	}
 
 	midiNote := (octave+1)*12 + noteBase[first] + accidental
+	return NotePitch(midiNote), nil
+}
 
-	return &Note{
-		Pitch: NotePitch(midiNote),
-		Off:   false,
-	}, nil
+// isValidVolumeString returns true if the given volume string is of a valid format.
+// This means either .. for no change, or a hex number 00 through 0F.
+func isValidVolumeString(volumeString string) bool {
+	// Volume strings are always 3 characters long.
+	if len(volumeString) != 2 {
+		return false
+	}
+
+	if volumeString[0] != '0' {
+		// There's no other option this could be apart from a volume value.
+		// Only volume values 00 through 0F are valid, so if it starts with anything else it's invalid.
+		return false
+	}
+
+	if volumeString[1] >= '0' && volumeString[1] <= '9' {
+		return true
+	}
+	upperString := strings.ToUpper(volumeString)
+	if upperString[1] >= 'A' && upperString[1] <= 'F' {
+		return true
+	}
+	return false
+}
+
+// parseVolumeString parses a volume string and returns a NoteVolume.
+func parseVolumeString(volumeString string) (NoteVolume, error) {
+	// Ensure the pitch string follows the correct format.
+	if !isValidVolumeString(volumeString) {
+		return NoteVolume(0), fmt.Errorf("invalid volume string '%s'", volumeString)
+	}
+
+	volume, err := strconv.ParseUint(volumeString, 16, 4)
+	if err != nil {
+		return NoteVolume(0), fmt.Errorf("error parsing volume string: %w", err)
+	}
+
+	return NoteVolume(volume), nil
+}
+
+// isValidEffectString returns true if the given effect string is of a valid format.
+// This means either .... for no change, or a hex number 0000 through FFFF.
+func isValidEffectString(effectString string) bool {
+	// Effect strings are always 4 characters long.
+	if len(effectString) != 4 {
+		return false
+	}
+
+	_, err := strconv.ParseUint(effectString[0:2], 16, 8)
+	if err != nil {
+		return false
+	}
+	if effectString[2:4] != ".." {
+		_, err := strconv.ParseUint(effectString[2:4], 16, 8)
+		if err != nil {
+			return false
+		}
+	}
+
+	return true
+}
+
+// parseEffectString parses an effect string and returns an Effect struct.
+func parseEffectString(effectString string) (Effect, error) {
+	// Ensure the effect string follows the correct format.
+	if !isValidEffectString(effectString) {
+		return Effect{}, fmt.Errorf("invalid effect string '%s'", effectString)
+	}
+
+	effectId, err := strconv.ParseUint(effectString[0:2], 16, 8)
+	if err != nil {
+		return Effect{}, fmt.Errorf("error parsing effect string: %w", err)
+	}
+
+	var effectType EffectType
+	var value uint64
+
+	if effectId >= 0xC0 && effectId <= 0xCF {
+		// Set tick rate (hz) effect is all effects 0xC0 through 0xCF,
+		// as the value is 12 bit and rolls over into the first byte.
+		effectType = EffectTickRateHz
+		if effectString[2:4] == ".." {
+			value, err = strconv.ParseUint(string(effectString[1]), 16, 4)
+			value <<= 8
+		} else {
+			value, err = strconv.ParseUint(effectString[1:4], 16, 16)
+		}
+		if err != nil {
+			return Effect{}, fmt.Errorf("error parsing effect string: %w", err)
+		}
+	} else {
+		switch effectId {
+		case 0x0B:
+			effectType = EffectJumpToPattern
+		case 0x09, 0x0F:
+			effectType = EffectSpeed
+		case 0x20:
+			effectType = EffectNoiseControl
+		case 0xF0:
+			effectType = EffectTickRateBpm
+		case 0xFF:
+			effectType = EffectStopSong
+		default:
+			// Error if we find any unrecognised effects.
+			return Effect{}, fmt.Errorf("unrecognised effect '%s'", effectString)
+		}
+
+		if effectString[2:4] == ".." {
+			value = 0
+		} else {
+			value, err = strconv.ParseUint(effectString[2:4], 16, 8)
+			if err != nil {
+				return Effect{}, fmt.Errorf("error parsing effect string: %w", err)
+			}
+		}
+	}
+
+	return Effect{Type: effectType, Value: uint16(value)}, nil
+}
+
+var noteBase = map[byte]int{
+	'C': 0,
+	'D': 2,
+	'E': 4,
+	'F': 5,
+	'G': 7,
+	'A': 9,
+	'B': 11,
+}
+
+// parseNote accepts a note string, which is a combination of a pitch, instrument (ignored), volume,
+// and any number of effects, and returns a Note struct defining that note (or nil if there is no note),
+// a slice of effects (which may contain no effects), and an error if something went wrong.
+func parseNote(noteString string) (Note, []Effect, error) {
+
+	// Remove any whitespace
+	cleanedNoteString := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, noteString)
+
+	// Make sure note strings are a valid length.
+	// 3 (pitch) + 2 (instrument) + 2 (volume) + 4 for every effect (minimum 1 effect).
+	if (len(cleanedNoteString)-11)%4 != 0 {
+		return Note{}, nil, fmt.Errorf("invalid note string: %s", noteString)
+	}
+
+	pitchString := cleanedNoteString[0:3]
+	volumeString := cleanedNoteString[5:7]
+
+	var err error
+
+	var pitch NotePitch
+	var volume NoteVolume
+	hasPitch := true
+	hasVolume := true
+	off := false
+
+	switch pitchString {
+	case "...":
+		pitch = NotePitch(0)
+		hasPitch = false
+	case "OFF":
+		pitch = NotePitch(0)
+		hasPitch = false
+		volume = NoteVolume(0)
+		hasVolume = true
+		off = true
+	default:
+		pitch, err = parsePitchString(pitchString)
+		if err != nil {
+			return Note{}, nil, err
+		}
+	}
+
+	if !off { // Make sure that the volume value hasn't been set to 0 already by a note OFF.
+		switch volumeString {
+		case "..":
+			volume = NoteVolume(0)
+			hasVolume = false
+		default:
+			volume, err = parseVolumeString(volumeString)
+			if err != nil {
+				return Note{}, nil, err
+			}
+		}
+	}
+
+	var effects []Effect
+
+	for i := 0; i < len(cleanedNoteString)-7; i += 4 {
+		effectString := cleanedNoteString[i+7 : i+11]
+		if effectString == "...." {
+			// Don't store empty effects.
+			continue
+		}
+		effect, err := parseEffectString(effectString)
+		if err != nil {
+			return Note{}, nil, err
+		}
+		effects = append(effects, effect)
+	}
+
+	return Note{
+		Pitch:     NotePitch(pitch),
+		HasPitch:  hasPitch,
+		Volume:    volume,
+		HasVolume: hasVolume,
+		Off:       off,
+	}, effects, nil
 }
 
 // A key and a value, used for key-value list elements.
@@ -296,7 +500,7 @@ func parseListElement(s string) (*listElement, error) {
 }
 
 // parseSpeedsList parses a string containing 1..16 positive non-zero integers
-// separated by whitespace. It returns a slice of pointers to each parsed int ([]*int).
+// separated by whitespace. It returns a slice of each parsed int ([]int).
 func (p *Parser) parseSpeedsList(s string) ([]int, error) {
 	tokens := strings.Fields(s)
 	if len(tokens) == 0 {
@@ -648,7 +852,36 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 			st, _ := getState[*boolMap](p, "subsongs")
 
 			if st.Ctx["parsingRows"] {
-				// TODO
+				fields := strings.FieldsFunc(trimmedLine, func(r rune) bool {
+					return r == '|'
+				})
+
+				subsongPtr := p.getCurrentSubsong()
+				if subsongPtr == nil {
+					return nil, p.fatalf("no current subsong while parsing")
+				}
+				row := Row{
+					Index: len(subsongPtr.Rows),
+				}
+
+				for i, field := range fields {
+					if i == 0 { // Ignore address values.
+						continue
+					}
+
+					note, effects, err := parseNote(field)
+					if err != nil {
+						p.addWarning("error parsing note in channel %d: %v", i-1, err)
+						row.Notes = append(row.Notes, Note{Channel: Channel(i - 1)})
+						continue
+					}
+					note.Channel = Channel(i - 1)
+
+					row.Notes = append(row.Notes, note)
+					row.Effects = append(row.Effects, effects...)
+				}
+
+				subsongPtr.Rows = append(subsongPtr.Rows, row)
 			}
 
 			var subsongName string
@@ -796,7 +1029,7 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 	}
 
 	if err := p.scanner.Err(); err != nil {
-		p.logger.Fatalf("error while reading file: %v", err)
+		p.fatalf("error while reading file: %v", err)
 	}
 
 	fileComplete := false
