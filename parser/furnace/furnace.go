@@ -38,7 +38,7 @@ type Song struct {
 	Name    string  // The name of the song.
 	Author  string  // The author of the song.
 	Album   string  // The album the song is a part of.
-	Tuning  float32 // The frequency that A4 maps to in this song (usually 440 hz).
+	Tuning  float64 // The frequency that A4 maps to in this song (usually 440 hz).
 
 	// A slice of sound chips used in the song.
 	SoundChips []*SoundChip
@@ -58,7 +58,7 @@ type SoundChip struct {
 type Subsong struct {
 	Index    int
 	Name     string  // The name of the subsong (can be blank).
-	TickRate float32 // The (starting) tick rate of the song.
+	TickRate float64 // The (starting) tick rate of the song.
 
 	// A slice of up to 16 speed values, where the values cycle every tick.
 	// The final update speed is calculated as the Tick Rate divided by the Frame Speed.
@@ -681,11 +681,11 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 			case "album":
 				p.song.Album = le.value
 			case "tuning":
-				tuning, err := strconv.ParseFloat(le.value, 32)
+				tuning, err := strconv.ParseFloat(le.value, 64)
 				if err != nil {
 					return nil, p.fatalf("error converting song tuning in text file to a number: %s", le.value)
 				}
-				p.song.Tuning = float32(tuning)
+				p.song.Tuning = tuning
 				st.Ctx["tuning"] = true
 			case "system", "instruments", "wavetables", "samples":
 				// Ignore; not important.
@@ -996,11 +996,11 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 				switch le.key {
 				case "tick rate":
 					st.Ctx["tickRate"] = true
-					tickRate, err := strconv.ParseFloat(le.value, 32)
+					tickRate, err := strconv.ParseFloat(le.value, 64)
 					if err != nil {
 						return nil, p.fatalf("error converting song tick rate in text file to a number: %s", le.value)
 					}
-					subsongPtr.TickRate = float32(tickRate)
+					subsongPtr.TickRate = tickRate
 				case "speeds":
 					st.Ctx["speeds"] = true
 					speeds, err := p.parseSpeedsList(le.value)
