@@ -614,7 +614,7 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 				}
 
 				p.song.Version = version
-				p.logger.Printf("Furnace version %d detected\n", version)
+				p.logger.Printf("Furnace version %d detected", version)
 
 				p.setState("song information", &boolMap{
 					Ctx: map[string]bool{
