@@ -852,6 +852,9 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 			st, _ := getState[*boolMap](p, "subsongs")
 
 			if st.Ctx["parsingRows"] {
+				if strings.HasPrefix(trimmedLine, "----- ORDER") { // Order header
+					continue
+				}
 				fields := strings.FieldsFunc(trimmedLine, func(r rune) bool {
 					return r == '|'
 				})
