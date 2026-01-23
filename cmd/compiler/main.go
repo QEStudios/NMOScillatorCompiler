@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/QEStudios/NMOScillatorCompiler/parser/furnace"
-	"github.com/davecgh/go-spew/spew"
+	"github.com/spf13/pflag"
 	"github.com/sqweek/dialog"
 )
 
@@ -24,8 +24,14 @@ func main() {
 		logger.Fatalf("failed to get current working directory: %v", err)
 	}
 
+	var subsongIndex uint8
+	pflag.Uint8VarP(&subsongIndex, "subsong", "s", 0, "subsong index (0-127)")
+	pflag.Parse()
+
+	logger.Printf("Parsing subsong %d", subsongIndex)
+
 	// Get the path of the Furnace text export file.
-	path, err := choosePath(cwd, os.Args)
+	path, err := choosePath(cwd, pflag.Args())
 	if err != nil {
 		if errors.Is(err, dialog.ErrCancelled) {
 			logger.Printf("User cancelled the file dialog")
@@ -41,28 +47,20 @@ func main() {
 	defer file.Close()
 
 	p := furnace.NewParser(file, logger)
-	result, err := p.Parse()
+	song, err := p.Parse(subsongIndex)
 	if err != nil {
 		logger.Fatalf("parse error: %v", err)
 	}
-	song := result.Song
-	warnings := result.Warnings
 
-	spew.Dump(song)
-	if len(warnings) > 0 {
-		logger.Printf("Parser returned %d warning(s):\n", len(warnings))
-		for _, w := range warnings {
-			logger.Printf("warning: %s", w)
-		}
-	}
+	fmt.Println(song)
 }
 
 // choosePath returns the file path either from the command-line args
 // or from an interactive file dialog.
 func choosePath(cwd string, args []string) (string, error) {
 	// If an argument was passed to the program, use it.
-	if len(args) > 1 {
-		path := args[1]
+	if len(args) > 0 {
+		path := args[0]
 		if err := validatePath(path); err != nil {
 			return "", fmt.Errorf("passed argument is not a valid path: %w", err)
 		}

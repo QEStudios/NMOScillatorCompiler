@@ -4,6 +4,7 @@ go 1.24.3
 
 require (
 	github.com/davecgh/go-spew v1.1.1
+	github.com/spf13/pflag v1.0.10
 	github.com/sqweek/dialog v0.0.0-20240226140203-065105509627
 )
 

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/QEStudios/NMOScillatorCompiler/nmos"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -56,13 +58,14 @@ type SoundChip struct {
 
 // A single subsong inside a whole song composition.
 type Subsong struct {
-	Index    int
-	Name     string  // The name of the subsong (can be blank).
-	TickRate float64 // The (starting) tick rate of the song.
+	Index         int
+	Name          string  // The name of the subsong (can be blank).
+	TickRate      float64 // The (starting) tick rate of the song.
+	PatternLength uint8   // The length of each pattern in the song.
 
 	// A slice of up to 16 speed values, where the values cycle every tick.
 	// The final update speed is calculated as the Tick Rate divided by the Frame Speed.
-	Speeds   []int
+	Speeds   []uint8
 	TimeBase int // Not sure what this value means, the Furnace code seems to multiply the speeds by this number + 1, so when this is 0 the speeds remain unchanged.
 
 	// A slice of every frame in the subsong.
@@ -93,8 +96,17 @@ type NotePitch int    // A single note (stored as a Midi note number).
 type NoteVolume uint8 // A single note's volume (4-bit).
 type EffectType int
 
+// pitchToFreq converts a Midi note number to a frequency, given a specific tuning of A4.
+func pitchToFreq(pitch NotePitch, tuning float64) float64 {
+	// For some reason, furnace notates the octaves as being two octaves *lower* than what they really sound like.
+	// So we need to offset it by bumping the note pitch up two octaves before converting.
+	offsetPitch := pitch + 24
+	return tuning * math.Pow(2, float64(offsetPitch-69)/12)
+}
+
 const (
 	EffectJumpToPattern EffectType = iota
+	EffectJumpToNextPattern
 	EffectSpeed
 	EffectNoiseControl
 	EffectTickRateHz
@@ -289,6 +301,8 @@ func parseEffectString(effectString string) (Effect, error) {
 		switch effectId {
 		case 0x0B:
 			effectType = EffectJumpToPattern
+		case 0x0D:
+			effectType = EffectJumpToNextPattern
 		case 0x09, 0x0F:
 			effectType = EffectSpeed
 		case 0x20:
@@ -363,7 +377,7 @@ func parseNote(noteString string) (Note, []Effect, error) {
 		pitch = NotePitch(0)
 		hasPitch = false
 		volume = NoteVolume(0)
-		hasVolume = true
+		hasVolume = false
 		off = true
 	default:
 		pitch, err = parsePitchString(pitchString)
@@ -501,33 +515,35 @@ func parseListElement(s string) (*listElement, error) {
 
 // parseSpeedsList parses a string containing 1..16 positive non-zero integers
 // separated by whitespace. It returns a slice of each parsed int ([]int).
-func (p *Parser) parseSpeedsList(s string) ([]int, error) {
+func (p *Parser) parseSpeedsList(s string) ([]uint8, error) {
 	tokens := strings.Fields(s)
 	if len(tokens) == 0 {
 		return nil, fmt.Errorf("expected 1..16 numbers, got none")
+	}
+
+	// TODO
+	if len(tokens) > 1 {
+		return nil, fmt.Errorf("compiler doesn't currently support groove patterns")
 	}
 
 	if len(tokens) > 16 {
 		p.addWarning("speeds list contains %d numbers, only first 16 will be used", len(tokens))
 	}
 
-	count := len(tokens)
-	if count > 16 {
-		count = 16
-	}
+	count := min(16, len(tokens))
 
-	out := make([]int, 0, count)
+	out := make([]uint8, 0, count)
 	for i := 0; i < count; i++ {
 		token := tokens[i]
 		v, err := strconv.Atoi(token)
 		if err != nil {
 			return nil, fmt.Errorf("token %d (%q) in speeds list is not a valid integer: %w", i+1, token, err)
 		}
-		if v <= 0 {
-			return nil, fmt.Errorf("token %d (%q) in speeds list must be positive and non-zero", i+1, token)
+		if v <= 0 || v >= 256 {
+			return nil, fmt.Errorf("token %d (%q) in speeds list must be in the range 1..255", i+1, token)
 		}
 
-		out = append(out, v)
+		out = append(out, uint8(v))
 	}
 
 	return out, nil
@@ -836,6 +852,7 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 						"parsingRows":     false,
 						"tickRate":        false,
 						"speeds":          false,
+						"patternLength":   false,
 					},
 				})
 
@@ -970,7 +987,7 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 						Index:    newIdx,
 						Name:     subsongName,
 						TickRate: 50,
-						Speeds:   []int{3},
+						Speeds:   []uint8{3},
 					})
 					continue
 				} else {
@@ -1017,7 +1034,14 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 						return nil, p.fatalf("error converting song time base in text file to a number: %s", le.value)
 					}
 					subsongPtr.TimeBase = timeBase
-				case "virtual tempo", "pattern length":
+				case "pattern length":
+					st.Ctx["patternLength"] = true
+					patternLength, err := strconv.ParseUint(le.value, 10, 8)
+					if err != nil {
+						return nil, p.fatalf("error convert pattern length in text file to a number: %s", le.value)
+					}
+					subsongPtr.PatternLength = uint8(patternLength)
+				case "virtual tempo":
 					// Ignore; not important.
 				default:
 					p.addWarning("unknown option in Sound Chips section: %s", le.key)
@@ -1055,6 +1079,337 @@ func (p *Parser) parseInternal() (*ParseResult, error) {
 	}, nil
 }
 
-func (p *Parser) Parse() (*ParseResult, error) {
-	return p.parseInternal()
+type noiseRateTypeEnum int
+
+const (
+	noiseRateCh3 noiseRateTypeEnum = iota
+	noiseRatePreset
+)
+
+func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosSong, error) {
+	parsedSong := result.Song
+	song := nmos.NmosSong{}
+	if subsongIndex >= uint8(len(parsedSong.Subsongs)) {
+		return nil, p.fatalf("subsong %d does not exist; song only contains %d subsongs (allowed range 0..%d)",
+			subsongIndex,
+			len(parsedSong.Subsongs), len(parsedSong.Subsongs)-1,
+		)
+	}
+	subsong := parsedSong.Subsongs[subsongIndex]
+
+	p.logger.Printf("Will parse %d rows", len(subsong.Rows))
+
+	if len(parsedSong.SoundChips) > 1 {
+		p.logger.Printf("Found %d sound chips, output will use the first one", len(parsedSong.SoundChips))
+	}
+
+	// Currently only one sound chip exists on the NMOScillator, so just assume the first sound chip is the one to use.
+	const soundchipIndex = 0
+
+	song.Name = ""
+	if parsedSong.Name != "" {
+		song.Name += parsedSong.Name
+		if subsong.Name != "" {
+			song.Name += " - "
+		}
+	}
+	if subsong.Name != "" {
+		song.Name += subsong.Name
+	}
+	if parsedSong.Album != "" {
+		song.Name += fmt.Sprintf(" (from %s)", parsedSong.Album)
+	}
+	song.Author = parsedSong.Author
+
+	finalTickrate := subsong.TickRate / (float64(subsong.Speeds[0]) * float64(subsong.TimeBase+1))
+
+	tempo, baseFrameDelay, _, _, ok := nmos.FindBestRate(finalTickrate)
+
+	if !ok {
+		return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance")
+	}
+
+	song.InitialTempo = tempo
+	song.ClockDiv = parsedSong.SoundChips[soundchipIndex].ClockDiv
+
+	var clockRate float64
+	if song.ClockDiv {
+		clockRate = 2_000_000
+	} else {
+		clockRate = 4_000_000
+	}
+
+	if clockRate == 2_000_000 {
+		// NMOScillator doesn't currently support using the ClockDiv option.
+		return nil, fmt.Errorf("Clock rate of 2 MHz is not currently supported by the NMOScillator")
+	}
+
+	var noiseRateType noiseRateTypeEnum
+	var noiseMode nmos.NoiseMode
+	var currentSpeed uint8
+	var currentTickRate float64
+	var loopTargetIndex int
+
+	currentSpeed = subsong.Speeds[0]
+	currentTickRate = subsong.TickRate
+
+	var isHalted bool // Does the song now halt? (used for breaking out of the loop)
+	var isLooped bool // Does the song now loop back to an earlier point? (used for breaking out of the loop)
+
+	resetFrame := nmos.Frame{}
+	err := resetFrame.SetNoiseControl(nmos.WhiteNoise, nmos.Channel3Noise)
+	if err != nil {
+		return nil, fmt.Errorf("error generating reset frame: %v", err)
+	}
+
+	for c := 0; c < 4; c++ {
+		resetFrame.SetAttenuation(uint8(c), 0xf)
+	}
+
+	song.Frames = append(song.Frames, resetFrame)
+
+	channelVolumes := []uint8{0xf, 0xf, 0xf, 0xf}
+	channelOffs := []bool{true, true, true, true} // Slice of 4 bools for whether each channel is off (true) or not (false).
+
+	for rowIndex := 0; rowIndex < len(subsong.Rows); {
+		newIndex := rowIndex + 1
+		row := subsong.Rows[rowIndex]
+
+		frame := nmos.Frame{}
+
+		isBlank := true
+
+		// Effects
+		for _, effect := range row.Effects {
+			switch effect.Type {
+			case EffectJumpToPattern:
+				currentPattern := rowIndex / int(subsong.PatternLength)
+				if int(effect.Value) > currentPattern { // skip forward
+					newIndex = int(effect.Value) * int(subsong.PatternLength)
+					p.logger.Printf("Jump to row %d", newIndex)
+				} else { // loop backward
+					loopTargetIndex = int(effect.Value)*int(subsong.PatternLength) + 1
+					song.LoopTarget = loopTargetIndex
+					frame.LoopToTarget = true
+					isLooped = true
+					isBlank = false
+				}
+
+			case EffectJumpToNextPattern:
+				currentPattern := rowIndex / int(subsong.PatternLength)
+				newIndex = (currentPattern + 1) * int(subsong.PatternLength)
+				p.logger.Printf("Jump to row %d", newIndex)
+
+			case EffectSpeed:
+				if len(subsong.Speeds) > 1 {
+					p.logger.Println("changing speed patterns using set groove pattern / set speed effects is not supported yet, ignoring")
+				} else {
+					finalTickrate := currentTickRate / (float64(effect.Value) * float64(subsong.TimeBase+1))
+					tempo, newBaseFrameDelay, _, _, ok := nmos.FindBestRate(finalTickrate)
+					if !ok {
+						return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance")
+					}
+					baseFrameDelay = newBaseFrameDelay
+
+					err := frame.SetNewTempo(tempo)
+					if err != nil {
+						return nil, fmt.Errorf("error setting frame tempo: %v", err)
+					}
+					currentSpeed = uint8(effect.Value)
+					isBlank = false
+				}
+
+			case EffectNoiseControl:
+				rateVal := effect.Value >> 4
+				modeVal := effect.Value % 16
+
+				if rateVal == 1 {
+					noiseRateType = noiseRateCh3
+				} else {
+					noiseRateType = noiseRatePreset
+				}
+
+				if modeVal == 1 {
+					noiseMode = nmos.WhiteNoise
+				} else {
+					noiseMode = nmos.PeriodicNoise
+				}
+
+				if noiseRateType == noiseRateCh3 {
+					err := frame.SetNoiseControl(noiseMode, nmos.Channel3Noise)
+					if err != nil {
+						return nil, fmt.Errorf("error setting noise control values: %v", err)
+					}
+				} else { // Noise uses preset frequency, set it to low frequency by default
+					err := frame.SetNoiseControl(noiseMode, nmos.LowNoise)
+					if err != nil {
+						return nil, fmt.Errorf("error setting noise control values: %v", err)
+					}
+				}
+				isBlank = false
+
+			case EffectTickRateHz:
+				finalTickrate := float64(effect.Value) / (float64(currentSpeed) * float64(subsong.TimeBase+1))
+				tempo, newBaseFrameDelay, closestRate, relErr, ok := nmos.FindBestRate(finalTickrate)
+				if !ok {
+					return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance.")
+				}
+				baseFrameDelay = newBaseFrameDelay
+				// DEBUG
+				p.logger.Printf("New speed: %d", effect.Value)
+				p.logger.Printf("Target tick rate: %0.2f. Chosen tempo: %d, base frame delay: %d, closest rate: %0.3f, error: %0.4f", finalTickrate, tempo, baseFrameDelay, closestRate, relErr)
+
+				err := frame.SetNewTempo(tempo)
+				if err != nil {
+					return nil, fmt.Errorf("error setting frame tempo: %v", err)
+				}
+				currentTickRate = float64(effect.Value)
+				isBlank = false
+
+			case EffectTickRateBpm:
+				tickRateHz := float64(effect.Value) * 24 / 60 // Furnace assumes 24 ticks per beat, I had to figure this out the hard way.
+				finalTickrate := tickRateHz / (float64(currentSpeed) * float64(subsong.TimeBase+1))
+				tempo, newBaseFrameDelay, closestRate, relErr, ok := nmos.FindBestRate(finalTickrate)
+				if !ok {
+					return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance")
+				}
+				baseFrameDelay = newBaseFrameDelay
+				// DEBUG
+				p.logger.Printf("New speed: %d", effect.Value)
+				p.logger.Printf("Target tick rate: %0.2f. Chosen tempo: %d, base frame delay: %d, closest rate: %0.3f, error: %0.4f", finalTickrate, tempo, baseFrameDelay, closestRate, relErr)
+
+				err := frame.SetNewTempo(tempo)
+				if err != nil {
+					return nil, fmt.Errorf("error setting frame tempo: %v", err)
+				}
+				currentTickRate = tickRateHz
+				isBlank = false
+
+			case EffectStopSong:
+				// We can stop parsing the song here,
+				// any remaining effects won't cause this frame to be played differently anyway.
+				// Since the NMOScillator has no way of actually halting the playback,
+				// we instead send it into an infinite loop at the end of the song.
+				loopTargetIndex = len(song.Frames) + 1
+				song.LoopTarget = loopTargetIndex
+				song.Frames = append(song.Frames, frame)
+
+				haltFrame := nmos.Frame{
+					LoopToTarget: true,
+				}
+				song.Frames = append(song.Frames, haltFrame)
+
+				isHalted = true
+				isBlank = false
+
+			default:
+				panic(fmt.Sprintf("unknown effect type %d", effect.Type))
+			}
+		}
+
+		frame.FrameDelay = baseFrameDelay
+
+		// Notes
+		for _, note := range row.Notes {
+
+			if note.Off {
+				err := frame.SetAttenuation(uint8(note.Channel), 0xf)
+				if err != nil {
+					return nil, fmt.Errorf("error setting channel off: %v", err)
+				}
+				channelOffs[note.Channel] = true
+				isBlank = false
+			}
+
+			if note.HasVolume {
+				vol := uint8(note.Volume)
+				if !channelOffs[note.Channel] {
+					err := frame.SetAttenuation(uint8(note.Channel), 0xf-vol)
+					if err != nil {
+						return nil, fmt.Errorf("error setting channel attenuation off: %v", err)
+					}
+				}
+				channelVolumes[note.Channel] = vol
+				isBlank = false
+			}
+
+			if note.HasPitch && note.Channel < 3 { // Set pitch for square channels.
+				period := nmos.CalculateSquarePeriod(pitchToFreq(note.Pitch, parsedSong.Tuning), clockRate)
+				err := frame.SetSquarePeriod(uint8(note.Channel), period)
+				if err != nil {
+					return nil, fmt.Errorf("error setting channel period: %v", err)
+				}
+				if channelOffs[note.Channel] {
+					err := frame.SetAttenuation(uint8(note.Channel), 0xf-channelVolumes[note.Channel])
+					if err != nil {
+						return nil, fmt.Errorf("error setting channel on: %v", err)
+					}
+					channelOffs[note.Channel] = false
+				}
+				isBlank = false
+			} else if note.HasPitch && note.Channel == 3 { // Set pitch for noise channel
+				if noiseRateType == noiseRateCh3 {
+					// TODO: Maybe noise channel in pulse mode isn't the right frequency,
+					// and should be calculated differently? I remember it being slightly
+					// off in pitch.
+					period := nmos.CalculateSquarePeriod(pitchToFreq(note.Pitch, parsedSong.Tuning), clockRate)
+					err := frame.SetSquarePeriod(2, period)
+					if err != nil {
+						return nil, fmt.Errorf("error setting noise period: %v", err)
+					}
+					if channelOffs[3] {
+						err := frame.SetAttenuation(3, 0xf-channelVolumes[3])
+						if err != nil {
+							return nil, fmt.Errorf("error setting noise attenuation: %v", err)
+						}
+						channelOffs[3] = false
+					}
+				}
+				isBlank = false
+			}
+		}
+
+		rowIndex = newIndex
+
+		// If this frame will be empty, increase the frame delay of the previous frame
+		// instead of making a new frame. Only make a new frame if the previous frame's delay can't get higher.
+		if isBlank {
+			prevFrame := &song.Frames[len(song.Frames)-1]
+
+			// HACK: will probably break when adding groove support.
+			if int(prevFrame.FrameDelay)+int(baseFrameDelay) <= 255 { // Frame delay can be increased.
+				prevFrame.FrameDelay += baseFrameDelay
+				continue // Don't append this blank frame.
+			}
+		}
+
+		if isHalted { // Break out of the loop early if we encountered a halt frame.
+			break
+		}
+
+		// TODO: groove patterns
+
+		song.Frames = append(song.Frames, frame)
+
+		if isLooped { // Finish parsing if the song will loop forever from this point.
+			break
+		}
+	}
+
+	if !(isHalted || isLooped) {
+		// Song has no loop or halt effects, so default to looping back to the start (this is what furnace does).
+		lastFrame := &song.Frames[len(song.Frames)-1]
+		lastFrame.LoopToTarget = true
+		song.LoopTarget = 1 // This should be the default value regardless but I like being explicit.
+	}
+
+	return &song, nil
+}
+
+func (p *Parser) Parse(subsongIndex uint8) (*nmos.NmosSong, error) {
+	internalSong, err := p.parseInternal()
+	if err != nil {
+		return nil, err
+	}
+	return p.parseNmos(internalSong, subsongIndex)
 }
