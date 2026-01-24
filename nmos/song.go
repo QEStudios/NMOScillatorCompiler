@@ -108,13 +108,13 @@ func (c *command) String() string {
 		}
 		switch c.noiseRate {
 		case LowNoise:
-			rate = "Low"
+			rate = "low"
 		case MediumNoise:
-			rate = "Med"
+			rate = "med"
 		case HighNoise:
-			rate = "High"
+			rate = "high"
 		case Channel3Noise:
-			rate = "Ch3"
+			rate = "ch3"
 		}
 		return fmt.Sprintf("Mode: %s %s", mode, rate)
 	default:
