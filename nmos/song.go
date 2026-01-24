@@ -60,7 +60,8 @@ type NmosSong struct {
 	Author string // Author of the song.
 
 	InitialTempo uint8 // Initial tempo of the song.
-	// If true, Divides the base clock frequency fed into the chip by 2 (effectively making it run at half speed and lower all notes by an octave).
+	// If true, Divides the base clock frequency fed into the chip by 2
+	// (effectively making it run at half speed and lower all notes by an octave).
 	ClockDiv   bool
 	Frames     []Frame
 	LoopTarget int // The index of the frame which will be marked as the Loop Target.
