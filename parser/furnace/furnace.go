@@ -1240,12 +1240,9 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 					if err != nil {
 						return nil, fmt.Errorf("error setting noise control values: %v", err)
 					}
-				} else { // Noise uses preset frequency, set it to low frequency by default
-					err := frame.SetNoiseControl(noiseMode, nmos.LowNoise)
-					if err != nil {
-						return nil, fmt.Errorf("error setting noise control values: %v", err)
-					}
 				}
+				// If not ch3 noise, noise uses preset frequency, and this means the noise control should be updated
+				// only when changing the preset (with a note pitch set in the noise channel).
 				isBlank = false
 
 			case EffectTickRateHz:
@@ -1356,6 +1353,32 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 					err := frame.SetSquarePeriod(2, period)
 					if err != nil {
 						return nil, fmt.Errorf("error setting noise period: %v", err)
+					}
+					if channelOffs[3] {
+						err := frame.SetAttenuation(3, 0xf-channelVolumes[3])
+						if err != nil {
+							return nil, fmt.Errorf("error setting noise attenuation: %v", err)
+						}
+						channelOffs[3] = false
+					}
+				} else {
+					// Noise mode is set to preset, so C = LOW, C# = MED, and D = HIGH.
+
+					var preset nmos.NoiseRate
+					switch note.Pitch % 12 { // Check the note pitch regardless of octave (C, C#, D, etc).
+					case 0: // C
+						preset = nmos.LowNoise
+					case 1: // C#
+						preset = nmos.MediumNoise
+					case 2: // D
+						preset = nmos.HighNoise
+					default: // any other pitch
+						return nil, fmt.Errorf("unable to convert noise pitch %d into a noise mode preset", note.Pitch)
+					}
+
+					err := frame.SetNoiseControl(noiseMode, preset)
+					if err != nil {
+						return nil, fmt.Errorf("error setting noise control values: %v", err)
 					}
 					if channelOffs[3] {
 						err := frame.SetAttenuation(3, 0xf-channelVolumes[3])
