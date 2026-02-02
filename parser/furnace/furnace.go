@@ -1429,10 +1429,19 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 	return &song, nil
 }
 
+// Parses into an NmosSong struct.
 func (p *Parser) Parse(subsongIndex uint8) (*nmos.NmosSong, error) {
 	internalSong, err := p.parseInternal()
 	if err != nil {
 		return nil, err
 	}
+
+	if len(internalSong.Warnings) > 0 {
+		p.logger.Println("Warnings produced while parsing file:")
+		for _, warning := range internalSong.Warnings {
+			p.logger.Printf("line %d: %v\n", warning.Line, warning.Message)
+		}
+	}
+
 	return p.parseNmos(internalSong, subsongIndex)
 }

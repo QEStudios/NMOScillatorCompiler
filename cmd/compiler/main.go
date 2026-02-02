@@ -53,6 +53,19 @@ func main() {
 	}
 
 	fmt.Println(song)
+
+	rom, err := song.Compile()
+	if err != nil {
+		logger.Fatalf("compile error: %v", err)
+	}
+
+	// Write to a .bin file in the same directory as the source file.
+	ext := filepath.Ext(path)
+	binPath := strings.TrimSuffix(path, ext) + ".bin"
+	err = os.WriteFile(binPath, rom, 0o644)
+	if err != nil {
+		logger.Fatalf("Error writing output file: %v", err)
+	}
 }
 
 // choosePath returns the file path either from the command-line args
@@ -61,10 +74,14 @@ func choosePath(cwd string, args []string) (string, error) {
 	// If an argument was passed to the program, use it.
 	if len(args) > 0 {
 		path := args[0]
-		if err := validatePath(path); err != nil {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("cannot get absolute path: %w", err)
+		}
+		if err := validatePath(absPath); err != nil {
 			return "", fmt.Errorf("passed argument is not a valid path: %w", err)
 		}
-		return path, nil
+		return absPath, nil
 	}
 
 	// Otherwise open the file dialog.
@@ -79,14 +96,19 @@ func choosePath(cwd string, args []string) (string, error) {
 		return "", err
 	}
 
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot get absolute path: %w", err)
+	}
+
 	// Check for empty path just in case.
-	if path == "" {
+	if absPath == "" {
 		return "", dialog.ErrCancelled
 	}
-	if err := validatePath(path); err != nil {
+	if err := validatePath(absPath); err != nil {
 		return "", fmt.Errorf("dialog selection invalid: %w", err)
 	}
-	return path, nil
+	return absPath, nil
 }
 
 // validatePath performs simple checks to verify if a file exists or not.

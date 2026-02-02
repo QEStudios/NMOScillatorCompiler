@@ -214,36 +214,6 @@ func (f *Frame) SetNoiseControl(mode NoiseMode, rate NoiseRate) error {
 	return nil
 }
 
-// CalculateSize returns the size in bytes of the frame.
-func (f *Frame) CalculateSize() int {
-	if f.hasTempoChange {
-		// Tempo changes require the frame to be 15+ bytes long.
-		// This is the only way a 15+ byte frame can exist.
-		return 15
-	}
-
-	runningTotal := 1 // Frame header data takes 1 byte
-	for _, command := range f.commands {
-		if command.commandType == SetSquarePeriodCommand {
-			// Period commands on the square wave channel are 2 bytes long.
-			runningTotal += 2
-		} else {
-			// All other commands are 1 byte long.
-			runningTotal++
-		}
-	}
-
-	if runningTotal > 1 || f.FrameDelay > 0 {
-		// Frame delay byte is required when there are commands.
-		// The only time a frame delay byte may be omitted is when the frame
-		// contains no commands and has no frame delay value.
-		// This is essentially a blank frame which just waits a tick.
-		runningTotal++
-	}
-
-	return runningTotal
-}
-
 // formatCommandsByChannel formats channel into a table with numChannels columns.
 // commands: input slice
 // numChannels: number of channels/columns to print.
@@ -291,7 +261,7 @@ func formatCommandsByChannel(commands []command, numChannels int, headerNames []
 		}
 
 		// Set a minimum width for nicer output
-		widths[i] = max(widths[i], 17)
+		widths[i] = max(widths[i], 18)
 	}
 
 	// Helper padding functions
@@ -375,7 +345,6 @@ func (s *NmosSong) String() string {
 
 	b.WriteString("- Frames:\n")
 
-	totalSize := 0
 	for i, frame := range s.Frames {
 		fmt.Fprintf(&b, "\n  - Frame #%d:", i)
 
@@ -383,6 +352,15 @@ func (s *NmosSong) String() string {
 			b.WriteString(" (loop target)")
 		}
 		b.WriteString("\n")
+
+		if i == 0 { // First frame logic.
+			// First frame in the song should set the song's tempo.
+			// Because the data format stores the initial tempo separately,
+			// we have to set the frame's tempo here so it's calculated accurately.
+			// HACK: If the frame already has a tempo which would override the initial tempo,
+			// this command will error anyway. We can ignore this command's errors
+			frame.SetNewTempo(s.InitialTempo)
+		}
 
 		if len(frame.commands) > 0 {
 			headers := []string{
@@ -404,7 +382,6 @@ func (s *NmosSong) String() string {
 		}
 
 		frameSize := frame.CalculateSize()
-		totalSize += frameSize
 		fmt.Fprintf(&b, "    [Total length: %d byte", frameSize)
 		if frameSize != 1 {
 			b.WriteString("s") // Pluralise the word "byte" if needed.
@@ -412,6 +389,7 @@ func (s *NmosSong) String() string {
 		b.WriteString("]\n")
 	}
 
+	totalSize := s.CalculateSize()
 	fmt.Fprintf(&b, "[Total song size: %d byte", totalSize)
 	if totalSize != 1 {
 		b.WriteString("s") // Pluralise the word "byte" if needed.
