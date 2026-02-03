@@ -1335,10 +1335,7 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 				isBlank = false
 			} else if note.HasPitch && note.Channel == 3 { // Set pitch for noise channel
 				if noiseRateType == noiseRateCh3 {
-					// TODO: Maybe noise channel in pulse mode isn't the right frequency,
-					// and should be calculated differently? I remember it being slightly
-					// off in pitch.
-					period := nmos.CalculateSquarePeriod(pitchToFreq(note.Pitch, parsedSong.Tuning), clockRate)
+					period := nmos.CalculateNoisePeriod(pitchToFreq(note.Pitch, parsedSong.Tuning), clockRate)
 					err := frame.SetSquarePeriod(2, period)
 					if err != nil {
 						return nil, fmt.Errorf("error setting noise period: %v", err)

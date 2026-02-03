@@ -461,3 +461,8 @@ func FindBestRate(targetRate float64) (tempo uint8, frameDelay uint8, achieved f
 func CalculateSquarePeriod(freq float64, clockRate float64) uint16 {
 	return uint16(math.RoundToEven(clockRate / (32 * freq)))
 }
+
+// CalculateNoisePeriod computes the (rounded) period of the noise channel from a given frequency and clock rate.
+func CalculateNoisePeriod(freq float64, clockRate float64) uint16 {
+	return uint16(math.RoundToEven(clockRate / (30 * freq)))
+}
