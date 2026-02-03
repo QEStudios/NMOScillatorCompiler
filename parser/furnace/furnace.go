@@ -1190,7 +1190,6 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 				} else { // loop backward
 					loopTargetIndex = int(effect.Value)*int(subsong.PatternLength) + 1
 					song.LoopTarget = loopTargetIndex
-					frame.LoopToTarget = true
 					isLooped = true
 					isBlank = false
 				}
@@ -1283,19 +1282,9 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 				isBlank = false
 
 			case EffectStopSong:
-				// We can stop parsing the song here,
-				// any remaining effects won't cause this frame to be played differently anyway.
+				// We can stop parsing the song after this frame.
 				// Since the NMOScillator has no way of actually halting the playback,
 				// we instead send it into an infinite loop at the end of the song.
-				loopTargetIndex = len(song.Frames) + 1
-				song.LoopTarget = loopTargetIndex
-				song.Frames = append(song.Frames, frame)
-
-				haltFrame := nmos.Frame{
-					LoopToTarget: true,
-				}
-				song.Frames = append(song.Frames, haltFrame)
-
 				isHalted = true
 				isBlank = false
 
@@ -1407,6 +1396,14 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 		}
 
 		if isHalted { // Break out of the loop early if we encountered a halt frame.
+			loopTargetIndex = len(song.Frames)
+			song.LoopTarget = loopTargetIndex
+			song.Frames = append(song.Frames, frame)
+
+			haltFrame := nmos.Frame{
+				LoopToTarget: true,
+			}
+			song.Frames = append(song.Frames, haltFrame)
 			break
 		}
 
@@ -1415,15 +1412,24 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 		song.Frames = append(song.Frames, frame)
 
 		if isLooped { // Finish parsing if the song will loop forever from this point.
+			song.Frames = append(song.Frames, frame)
+
+			haltFrame := nmos.Frame{
+				LoopToTarget: true,
+			}
+			song.Frames = append(song.Frames, haltFrame)
 			break
 		}
 	}
 
 	if !(isHalted || isLooped) {
 		// Song has no loop or halt effects, so default to looping back to the start (this is what furnace does).
-		lastFrame := &song.Frames[len(song.Frames)-1]
-		lastFrame.LoopToTarget = true
-		song.LoopTarget = 1 // This should be the default value regardless but I like being explicit.
+
+		loopFrame := nmos.Frame{
+			LoopToTarget: true,
+		}
+		song.Frames = append(song.Frames, loopFrame)
+		song.LoopTarget = 0 // This should be the default value regardless but I like being explicit.
 	}
 
 	return &song, nil
