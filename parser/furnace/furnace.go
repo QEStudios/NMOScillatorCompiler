@@ -1390,7 +1390,7 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 
 			// HACK: will probably break when adding groove support.
 			if int(prevFrame.FrameDelay)+int(baseFrameDelay) <= 255 { // Frame delay can be increased.
-				prevFrame.FrameDelay += baseFrameDelay
+				prevFrame.FrameDelay += (baseFrameDelay + 1)
 				continue // Don't append this blank frame.
 			}
 		}
