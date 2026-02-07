@@ -65,6 +65,8 @@ func main() {
 
 		n := len(internalSong.Song.Subsongs)
 
+		logger.Printf("Concatenating %d subsongs", n)
+
 		subsongIndices = make([]int, n) // Allocate space for the indices.
 
 		for i := range n {
@@ -77,19 +79,21 @@ func main() {
 		if subsongIndex > 255 {
 			logger.Fatalf("subsong index %d out of range", subsongIndex)
 		}
-		logger.Printf("Parsing subsong %d", subsongIndex)
 
 		song, err := p.ParseNmos(internalSong, uint8(subsongIndex))
 		if err != nil {
-			logger.Fatalf("parse error: %v", err)
+			logger.Fatalf("error parsing subsong %d: %v", subsongIndex, err)
 		}
 
 		// fmt.Println(song)
 
 		subsongBin, err := song.Compile()
 		if err != nil {
-			logger.Fatalf("compile error: %v", err)
+			logger.Fatalf("error compiling subsong %d: %v", subsongIndex, err)
 		}
+
+		logger.Printf("Subsong %d:\taddress: %d,\tsize: %d bytes", subsongIndex, len(rom), len(subsongBin))
+
 		rom = slices.Concat(rom, subsongBin)
 	}
 

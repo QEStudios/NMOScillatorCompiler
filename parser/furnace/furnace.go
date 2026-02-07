@@ -521,7 +521,7 @@ func (p *Parser) parseSpeedsList(s string) ([]uint8, error) {
 		return nil, fmt.Errorf("expected 1..16 numbers, got none")
 	}
 
-	// TODO
+	// TODO: groove patterns
 	if len(tokens) > 1 {
 		return nil, fmt.Errorf("compiler doesn't currently support groove patterns")
 	}
@@ -1097,8 +1097,6 @@ func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 	}
 	subsong := parsedSong.Subsongs[subsongIndex]
 
-	p.logger.Printf("Will parse %d rows", len(subsong.Rows))
-
 	if len(parsedSong.SoundChips) > 1 {
 		p.logger.Printf("Found %d sound chips, output will use the first one", len(parsedSong.SoundChips))
 	}
@@ -1186,7 +1184,6 @@ func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 				currentPattern := rowIndex / int(subsong.PatternLength)
 				if int(effect.Value) > currentPattern { // skip forward
 					newIndex = int(effect.Value) * int(subsong.PatternLength)
-					p.logger.Printf("Jump to row %d", newIndex)
 				} else { // loop backward
 					loopTargetIndex = int(effect.Value)*int(subsong.PatternLength) + 1
 					song.LoopTarget = loopTargetIndex
@@ -1197,7 +1194,6 @@ func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 			case EffectJumpToNextPattern:
 				currentPattern := rowIndex / int(subsong.PatternLength)
 				newIndex = (currentPattern + 1) * int(subsong.PatternLength)
-				p.logger.Printf("Jump to row %d", newIndex)
 
 			case EffectSpeed:
 				if len(subsong.Speeds) > 1 {
@@ -1246,14 +1242,11 @@ func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 
 			case EffectTickRateHz:
 				finalTickrate := float64(effect.Value) / (float64(currentSpeed) * float64(subsong.TimeBase+1))
-				tempo, newBaseFrameDelay, closestRate, relErr, ok := nmos.FindBestRate(finalTickrate)
+				tempo, newBaseFrameDelay, _, _, ok := nmos.FindBestRate(finalTickrate)
 				if !ok {
 					return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance.")
 				}
 				baseFrameDelay = newBaseFrameDelay
-				// DEBUG
-				p.logger.Printf("New speed: %d", effect.Value)
-				p.logger.Printf("Target tick rate: %0.2f. Chosen tempo: %d, base frame delay: %d, closest rate: %0.3f, error: %0.4f", finalTickrate, tempo, baseFrameDelay, closestRate, relErr)
 
 				err := frame.SetNewTempo(tempo)
 				if err != nil {
@@ -1265,14 +1258,11 @@ func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 			case EffectTickRateBpm:
 				tickRateHz := float64(effect.Value) * 24 / 60 // Furnace assumes 24 ticks per beat, I had to figure this out the hard way.
 				finalTickrate := tickRateHz / (float64(currentSpeed) * float64(subsong.TimeBase+1))
-				tempo, newBaseFrameDelay, closestRate, relErr, ok := nmos.FindBestRate(finalTickrate)
+				tempo, newBaseFrameDelay, _, _, ok := nmos.FindBestRate(finalTickrate)
 				if !ok {
 					return nil, fmt.Errorf("unable to find compatible tickrate within an acceptable tolerance")
 				}
 				baseFrameDelay = newBaseFrameDelay
-				// DEBUG
-				p.logger.Printf("New speed: %d", effect.Value)
-				p.logger.Printf("Target tick rate: %0.2f. Chosen tempo: %d, base frame delay: %d, closest rate: %0.3f, error: %0.4f", finalTickrate, tempo, baseFrameDelay, closestRate, relErr)
 
 				err := frame.SetNewTempo(tempo)
 				if err != nil {
