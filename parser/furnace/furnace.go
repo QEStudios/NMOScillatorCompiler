@@ -1393,9 +1393,12 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 		}
 
 		if isHalted { // Break out of the loop early if we encountered a halt frame.
+			song.Frames = append(song.Frames, frame)
+
 			loopTargetIndex = len(song.Frames)
 			song.LoopTarget = loopTargetIndex
-			song.Frames = append(song.Frames, frame)
+
+			song.Frames = append(song.Frames, resetFrame) // silent reset frame to target in the loop (constantly silences all channels)
 
 			haltFrame := nmos.Frame{
 				LoopToTarget: true,
@@ -1411,10 +1414,10 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 		if isLooped { // Finish parsing if the song will loop forever from this point.
 			song.Frames = append(song.Frames, frame)
 
-			haltFrame := nmos.Frame{
+			loopFrame := nmos.Frame{
 				LoopToTarget: true,
 			}
-			song.Frames = append(song.Frames, haltFrame)
+			song.Frames = append(song.Frames, loopFrame)
 			break
 		}
 	}
