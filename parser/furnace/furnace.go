@@ -587,7 +587,7 @@ type boolMap struct {
 	Ctx map[string]bool
 }
 
-func (p *Parser) parseInternal() (*ParseResult, error) {
+func (p *Parser) ParseInternal() (*ParseResult, error) {
 	if p.used {
 		return nil, fmt.Errorf("parser already used")
 	}
@@ -1086,7 +1086,7 @@ const (
 	noiseRatePreset
 )
 
-func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosSong, error) {
+func (p *Parser) ParseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosSong, error) {
 	parsedSong := result.Song
 	song := nmos.NmosSong{}
 	if subsongIndex >= uint8(len(parsedSong.Subsongs)) {
@@ -1433,21 +1433,4 @@ func (p *Parser) parseNmos(result *ParseResult, subsongIndex uint8) (*nmos.NmosS
 	}
 
 	return &song, nil
-}
-
-// Parses into an NmosSong struct.
-func (p *Parser) Parse(subsongIndex uint8) (*nmos.NmosSong, error) {
-	internalSong, err := p.parseInternal()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(internalSong.Warnings) > 0 {
-		p.logger.Println("Warnings produced while parsing file:")
-		for _, warning := range internalSong.Warnings {
-			p.logger.Printf("line %d: %v\n", warning.Line, warning.Message)
-		}
-	}
-
-	return p.parseNmos(internalSong, subsongIndex)
 }

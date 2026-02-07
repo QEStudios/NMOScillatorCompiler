@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/QEStudios/NMOScillatorCompiler/parser/furnace"
@@ -24,11 +25,9 @@ func main() {
 		logger.Fatalf("failed to get current working directory: %v", err)
 	}
 
-	var subsongIndex uint8
-	pflag.Uint8VarP(&subsongIndex, "subsong", "s", 0, "subsong index (0-127)")
+	var subsongIndices []int
+	pflag.IntSliceVarP(&subsongIndices, "subsong", "s", make([]int, 0), "subsong index (0-127)")
 	pflag.Parse()
-
-	logger.Printf("Parsing subsong %d", subsongIndex)
 
 	// Get the path of the Furnace text export file.
 	path, err := choosePath(cwd, pflag.Args())
@@ -46,18 +45,55 @@ func main() {
 	}
 	defer file.Close()
 
+	var rom []byte
+
+	// parse whole file into internal Furnace format.
 	p := furnace.NewParser(file, logger)
-	song, err := p.Parse(subsongIndex)
+	internalSong, err := p.ParseInternal()
 	if err != nil {
 		logger.Fatalf("parse error: %v", err)
 	}
-
-	fmt.Println(song)
-
-	rom, err := song.Compile()
-	if err != nil {
-		logger.Fatalf("compile error: %v", err)
+	if len(internalSong.Warnings) > 0 {
+		logger.Println("Warnings produced while parsing file:")
+		for _, warning := range internalSong.Warnings {
+			logger.Printf("line %d: %v\n", warning.Line, warning.Message)
+		}
 	}
+
+	if len(subsongIndices) == 0 {
+		// If no subsongs are specified, parse all subsongs into a single rom.
+
+		n := len(internalSong.Song.Subsongs)
+
+		subsongIndices = make([]int, n) // Allocate space for the indices.
+
+		for i := range n {
+			subsongIndices[i] = i
+		}
+	}
+
+	// Iterate over every subsong index provided and parse/compile them, then combine them into a single rom.
+	for _, subsongIndex := range subsongIndices {
+		if subsongIndex > 255 {
+			logger.Fatalf("subsong index %d out of range", subsongIndex)
+		}
+		logger.Printf("Parsing subsong %d", subsongIndex)
+
+		song, err := p.ParseNmos(internalSong, uint8(subsongIndex))
+		if err != nil {
+			logger.Fatalf("parse error: %v", err)
+		}
+
+		// fmt.Println(song)
+
+		subsongBin, err := song.Compile()
+		if err != nil {
+			logger.Fatalf("compile error: %v", err)
+		}
+		rom = slices.Concat(rom, subsongBin)
+	}
+
+	logger.Printf("Total rom size: %d bytes", len(rom))
 
 	// Write to a .bin file in the same directory as the source file.
 	ext := filepath.Ext(path)
