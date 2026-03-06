@@ -11,7 +11,6 @@ import (
 	"unicode"
 
 	"github.com/QEStudios/NMOScillatorCompiler/nmos"
-	"github.com/davecgh/go-spew/spew"
 )
 
 // A struct to store a range of Furnace version numbers, used for checking version compatibility for the text exports.
@@ -1049,7 +1048,6 @@ func (p *Parser) ParseInternal() (*ParseResult, error) {
 			}
 
 		default:
-			spew.Dump(p.song)
 			return nil, p.fatalf("unknown parser state: %s", p.state)
 		}
 

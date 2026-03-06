@@ -14,10 +14,14 @@ import (
 	"github.com/sqweek/dialog"
 )
 
+var version = "undefined"
+
 var logger *log.Logger
 
 func main() {
 	logger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
+
+	logger.Printf("NMOScillator Compiler version %s\n", version)
 
 	// Get the current working directory.
 	cwd, err := os.Getwd()
@@ -65,7 +69,9 @@ func main() {
 
 		n := len(internalSong.Song.Subsongs)
 
-		logger.Printf("Concatenating %d subsongs", n)
+		if n > 1 {
+			logger.Printf("Concatenating %d subsongs", n)
+		}
 
 		subsongIndices = make([]int, n) // Allocate space for the indices.
 
