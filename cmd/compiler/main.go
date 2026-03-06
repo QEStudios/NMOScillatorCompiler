@@ -30,7 +30,11 @@ func main() {
 	}
 
 	var subsongIndices []int
-	pflag.IntSliceVarP(&subsongIndices, "subsong", "s", make([]int, 0), "subsong index (0-127)")
+	pflag.IntSliceVarP(&subsongIndices, "subsong", "s", make([]int, 0), "Subsong index(es) (0-127). Pack multiple subsongs with syntax like 0,1,3,4.")
+
+	var binPath string
+	pflag.StringVarP(&binPath, "output", "o", "", "Output path for .bin file.")
+
 	pflag.Parse()
 
 	// Get the path of the Furnace text export file.
@@ -106,11 +110,18 @@ func main() {
 	logger.Printf("Total rom size: %d bytes", len(rom))
 
 	// Write to a .bin file in the same directory as the source file.
-	ext := filepath.Ext(path)
-	binPath := strings.TrimSuffix(path, ext) + ".bin"
+	if binPath == "" { // No output path provided
+		ext := filepath.Ext(path)
+		binPath = strings.TrimSuffix(path, ext) + ".bin"
+	}
+	binPath, err = filepath.Abs(binPath)
+	if err != nil {
+		logger.Fatalf("error parsing output path: %v", err)
+	}
+
 	err = os.WriteFile(binPath, rom, 0o644)
 	if err != nil {
-		logger.Fatalf("Error writing output file: %v", err)
+		logger.Fatalf("error writing output file: %v", err)
 	}
 }
 
